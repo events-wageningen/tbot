@@ -1,4 +1,5 @@
-import "dotenv/config";
+import { config } from "dotenv";
+config({ override: true }); // .env always wins over shell env vars
 import { Bot, Context, session } from "grammy";
 import type { SessionFlavor } from "grammy";
 import {

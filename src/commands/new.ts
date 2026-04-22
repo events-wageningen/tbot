@@ -1,20 +1,271 @@
 import { InlineKeyboard } from "grammy";
 import type { Conversation, ConversationFlavor } from "@grammyjs/conversations";
 import type { Context } from "grammy";
-import { supabase } from "../lib/supabase.js";
+import { getSupabase, getCategories, type Category } from "../lib/supabase.js";
 import { uploadImage, triggerDeploy } from "../lib/github.js";
 import { toEventId } from "../lib/slugify.js";
 
 export type BotContext = Context & ConversationFlavor;
 export type BotConversation = Conversation<BotContext>;
 
-const VALID_CATEGORIES = [
-  "music", "talks", "movies", "dance", "workshops", "nature",
-  "yoga", "meditation", "sport", "politics", "art", "games",
-  "markets", "food",
-] as const;
+// ── Date picker helpers ───────────────────────────────────────────────────────
 
-/** Wait for a plain text message; return null if the user types /cancel. */
+function pad(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+function formatYMD(y: number, m: number, d: number): string {
+  return `${y}-${pad(m)}-${pad(d)}`;
+}
+
+function daysInMonth(year: number, month: number): number {
+  return new Date(year, month, 0).getDate(); // month is 1-based here
+}
+
+const MONTH_LABELS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+/**
+ * Three-step date picker: year → month → day.
+ * Returns YYYY-MM-DD or null on /cancel.
+ */
+async function askDate(
+  conversation: BotConversation,
+  ctx: BotContext,
+  prompt: string
+): Promise<string | null> {
+  const thisYear = new Date().getFullYear();
+
+  // ── Step 1: Year ──────────────────────────────────────────────────────────
+  const yearKb = new InlineKeyboard()
+    .text(String(thisYear), `dp:y:${thisYear}`)
+    .text(String(thisYear + 1), `dp:y:${thisYear + 1}`);
+
+  await ctx.reply(`📅 ${prompt} — pick a year:`, { reply_markup: yearKb });
+
+  let year = 0;
+  while (true) {
+    const upd = await conversation.wait();
+    if (upd.message?.text?.trim() === "/cancel") {
+      await ctx.reply("❌ Cancelled. Use /new to start again.");
+      return null;
+    }
+    if (upd.callbackQuery?.data?.startsWith("dp:y:")) {
+      await upd.answerCallbackQuery();
+      year = parseInt(upd.callbackQuery.data.replace("dp:y:", ""));
+      break;
+    }
+  }
+
+  // ── Step 2: Month ─────────────────────────────────────────────────────────
+  const monthKb = new InlineKeyboard();
+  MONTH_LABELS.forEach((label, i) => {
+    monthKb.text(label, `dp:m:${i + 1}`);
+    if (i % 4 === 3) monthKb.row();
+  });
+
+  await ctx.reply(`📅 ${prompt} ${year} — pick a month:`, { reply_markup: monthKb });
+
+  let month = 0;
+  while (true) {
+    const upd = await conversation.wait();
+    if (upd.message?.text?.trim() === "/cancel") {
+      await ctx.reply("❌ Cancelled. Use /new to start again.");
+      return null;
+    }
+    if (upd.callbackQuery?.data?.startsWith("dp:m:")) {
+      await upd.answerCallbackQuery();
+      month = parseInt(upd.callbackQuery.data.replace("dp:m:", ""));
+      break;
+    }
+  }
+
+  // ── Step 3: Day ───────────────────────────────────────────────────────────
+  const totalDays = daysInMonth(year, month);
+  const dayKb = new InlineKeyboard();
+  for (let d = 1; d <= totalDays; d++) {
+    dayKb.text(String(d), `dp:d:${d}`);
+    if (d % 7 === 0) dayKb.row();
+  }
+
+  const monthName = MONTH_LABELS[month - 1];
+  await ctx.reply(`📅 ${prompt} ${monthName} ${year} — pick a day:`, { reply_markup: dayKb });
+
+  let day = 0;
+  while (true) {
+    const upd = await conversation.wait();
+    if (upd.message?.text?.trim() === "/cancel") {
+      await ctx.reply("❌ Cancelled. Use /new to start again.");
+      return null;
+    }
+    if (upd.callbackQuery?.data?.startsWith("dp:d:")) {
+      await upd.answerCallbackQuery();
+      day = parseInt(upd.callbackQuery.data.replace("dp:d:", ""));
+      break;
+    }
+  }
+
+  const result = formatYMD(year, month, day);
+  await ctx.reply(`📅 Selected: ${day} ${monthName} ${year}`);
+  return result;
+}
+
+/**
+ * End-date picker: offers "Same as start date" or runs the full date picker.
+ */
+async function askEndDate(
+  conversation: BotConversation,
+  ctx: BotContext,
+  startDateYMD: string
+): Promise<string | null> {
+  const [y, m, d] = startDateYMD.split("-");
+  const monthName = MONTH_LABELS[parseInt(m) - 1];
+  const display = `${parseInt(d)} ${monthName} ${y}`;
+
+  const kb = new InlineKeyboard()
+    .text(`📅 Same (${display})`, "dp:end:same")
+    .text("📅 Other date", "dp:end:other");
+
+  await ctx.reply("📅 End date:", { reply_markup: kb });
+
+  while (true) {
+    const upd = await conversation.wait();
+    if (upd.message?.text?.trim() === "/cancel") {
+      await ctx.reply("❌ Cancelled. Use /new to start again.");
+      return null;
+    }
+    if (upd.callbackQuery?.data === "dp:end:same") {
+      await upd.answerCallbackQuery();
+      await ctx.reply(`📅 End date: same as start (${display})`);
+      return startDateYMD;
+    }
+    if (upd.callbackQuery?.data === "dp:end:other") {
+      await upd.answerCallbackQuery();
+      return await askDate(conversation, ctx, "End date");
+    }
+  }
+}
+
+/** Ask for a time via inline keyboard (common times) or free text. Returns HH:MM or null. */
+async function askTime(
+  conversation: BotConversation,
+  ctx: BotContext,
+  prompt: string
+): Promise<string | null> {
+  const times = [
+    "08:00","09:00","10:00",
+    "11:00","12:00","13:00",
+    "14:00","15:00","16:00",
+    "17:00","18:00","19:00",
+    "20:00","21:00","22:00",
+  ];
+  const kb = new InlineKeyboard();
+  times.forEach((t, i) => {
+    kb.text(t, `time:${t}`);
+    if (i % 3 === 2) kb.row();
+  });
+  kb.row().text("✍️ Other", "time:other");
+
+  await ctx.reply(prompt, { reply_markup: kb });
+
+  while (true) {
+    const upd = await conversation.wait();
+
+    if (upd.message?.text?.trim() === "/cancel") {
+      await ctx.reply("❌ Cancelled. Use /new to start again.");
+      return null;
+    }
+
+    if (upd.callbackQuery?.data?.startsWith("time:")) {
+      await upd.answerCallbackQuery();
+      const val = upd.callbackQuery.data.replace("time:", "");
+      if (val !== "other") return val;
+
+      // Ask for free-text time
+      await ctx.reply("⏰ Enter time (HH:MM):");
+      while (true) {
+        const { message: m } = await conversation.waitFor("message:text");
+        if (m.text.trim() === "/cancel") {
+          await ctx.reply("❌ Cancelled. Use /new to start again.");
+          return null;
+        }
+        const t = m.text.trim();
+        if (/^\d{1,2}:\d{2}$/.test(t)) return t.padStart(5, "0");
+        await ctx.reply("⚠️ Invalid format, expected HH:MM. Try again:");
+      }
+    }
+
+    // User typed a time directly instead of using keyboard
+    if (upd.message?.text) {
+      const t = upd.message.text.trim();
+      if (/^\d{1,2}:\d{2}$/.test(t)) return t.padStart(5, "0");
+      await ctx.reply("⚠️ Please tap a time button or enter HH:MM:");
+    }
+  }
+}
+
+/** Multi-select category keyboard. Returns array of selected category IDs. */
+async function askCategories(
+  conversation: BotConversation,
+  ctx: BotContext,
+  categories: Category[]
+): Promise<string[] | null> {
+  const selected = new Set<string>();
+
+  const buildKeyboard = () => {
+    const kb = new InlineKeyboard();
+    categories.forEach((cat, i) => {
+      const on = selected.has(cat.id);
+      const label = on ? `✅ ${cat.emoji} ${cat.label}` : `${cat.emoji} ${cat.label}`;
+      kb.text(label, `cat:${cat.id}`);
+      if (i % 2 === 1) kb.row();
+    });
+    if (categories.length % 2 !== 0) kb.row();
+    kb.text("✅ Done", "cat:done");
+    return kb;
+  };
+
+  const catMsg = await ctx.reply("🏷 Select categories (tap to toggle, then Done):", {
+    reply_markup: buildKeyboard(),
+  });
+  const chatId = ctx.chat!.id;
+  const msgId = catMsg.message_id;
+
+  while (true) {
+    const upd = await conversation.wait();
+
+    if (upd.message?.text?.trim() === "/cancel") {
+      await ctx.reply("❌ Cancelled. Use /new to start again.");
+      return null;
+    }
+
+    if (!upd.callbackQuery?.data?.startsWith("cat:")) continue;
+
+    await upd.answerCallbackQuery();
+    const data = upd.callbackQuery.data;
+
+    if (data === "cat:done") {
+      if (selected.size === 0) {
+        await upd.answerCallbackQuery("⚠️ Select at least one category");
+        continue;
+      }
+      // Remove the inline keyboard from the message
+      await ctx.api.editMessageReplyMarkup(chatId, msgId);
+      await ctx.reply(`🏷 Selected: ${[...selected].join(", ")}`);
+      return [...selected];
+    }
+
+    const catId = data.replace("cat:", "");
+    if (selected.has(catId)) selected.delete(catId);
+    else selected.add(catId);
+
+    await ctx.api.editMessageReplyMarkup(chatId, msgId, {
+      reply_markup: buildKeyboard(),
+    });
+  }
+}
+
+// ── Plain text helper ─────────────────────────────────────────────────────────
+
 async function askText(
   conversation: BotConversation,
   ctx: BotContext,
@@ -29,6 +280,8 @@ async function askText(
   return message.text.trim();
 }
 
+// ── Main conversation ─────────────────────────────────────────────────────────
+
 export async function newEventConversation(
   conversation: BotConversation,
   ctx: BotContext
@@ -38,86 +291,45 @@ export async function newEventConversation(
     { parse_mode: "Markdown" }
   );
 
-  // ── Name ─────────────────────────────────────────────────────────────────
+  // ── Name ──────────────────────────────────────────────────────────────────
   const { message: nameMsg } = await conversation.waitFor("message:text");
   if (nameMsg.text.trim() === "/cancel") { await ctx.reply("❌ Cancelled."); return; }
   const name = nameMsg.text.trim();
   if (!name) { await ctx.reply("⚠️ Name cannot be empty. Use /new to start again."); return; }
 
-  // ── Start date ────────────────────────────────────────────────────────────
-  const startDateRaw = await askText(conversation, ctx, "📅 Start date (YYYY-MM-DD):");
+  // ── Start date / time ─────────────────────────────────────────────────────
+  const startDateRaw = await askDate(conversation, ctx, "📅 Start date:");
   if (startDateRaw === null) return;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDateRaw)) {
-    await ctx.reply("❌ Invalid format, expected YYYY-MM-DD. Use /new to start again.");
-    return;
-  }
 
-  // ── Start time ────────────────────────────────────────────────────────────
-  const startTimeRaw = await askText(conversation, ctx, "⏰ Start time (HH:MM):");
+  const startTimeRaw = await askTime(conversation, ctx, "⏰ Start time:");
   if (startTimeRaw === null) return;
-  if (!/^\d{2}:\d{2}$/.test(startTimeRaw)) {
-    await ctx.reply("❌ Invalid format, expected HH:MM. Use /new to start again.");
-    return;
-  }
 
-  const startDate = `${startDateRaw}T${startTimeRaw}:00`;
   const year = parseInt(startDateRaw.split("-")[0]);
   const id = toEventId(name, year);
+  const startDate = `${startDateRaw}T${startTimeRaw}:00`;
 
-  // ── End date ──────────────────────────────────────────────────────────────
-  const endDateRaw = await askText(
-    conversation,
-    ctx,
-    `📅 End date (YYYY-MM-DD) — or send the same date to use ${startDateRaw}:`
-  );
-  if (endDateRaw === null) return;
-  const endDateStr = endDateRaw || startDateRaw;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(endDateStr)) {
-    await ctx.reply("❌ Invalid format, expected YYYY-MM-DD. Use /new to start again.");
-    return;
-  }
+  // ── End date / time ───────────────────────────────────────────────────────
+  const endDateStr = await askEndDate(conversation, ctx, startDateRaw);
+  if (endDateStr === null) return;
 
-  // ── End time ──────────────────────────────────────────────────────────────
-  const endTimeRaw = await askText(conversation, ctx, "⏰ End time (HH:MM):");
+  const endTimeRaw = await askTime(conversation, ctx, "⏰ End time:");
   if (endTimeRaw === null) return;
-  if (!/^\d{2}:\d{2}$/.test(endTimeRaw)) {
-    await ctx.reply("❌ Invalid format, expected HH:MM. Use /new to start again.");
-    return;
-  }
   const endDate = `${endDateStr}T${endTimeRaw}:00`;
 
-  // ── Venue name ────────────────────────────────────────────────────────────
+  // ── Venue / city ──────────────────────────────────────────────────────────
   const locationName = await askText(conversation, ctx, "📍 Venue name:");
   if (locationName === null) return;
 
-  // ── City ──────────────────────────────────────────────────────────────────
-  const cityRaw = await askText(
-    conversation,
-    ctx,
-    "🏙 City (type Wageningen or a different city):"
-  );
+  const cityRaw = await askText(conversation, ctx, "🏙 City (default: Wageningen):");
   if (cityRaw === null) return;
   const locationCity = cityRaw || "Wageningen";
 
-  // ── Categories ────────────────────────────────────────────────────────────
-  const catRaw = await askText(
-    conversation,
-    ctx,
-    `🏷 Categories, comma-separated:\n${VALID_CATEGORIES.join(", ")}`
-  );
-  if (catRaw === null) return;
-  const category = catRaw
-    .split(",")
-    .map((c) => c.trim().toLowerCase())
-    .filter((c): c is (typeof VALID_CATEGORIES)[number] =>
-      (VALID_CATEGORIES as readonly string[]).includes(c)
-    );
-  if (category.length === 0) {
-    await ctx.reply("⚠️ No valid categories found. Use /new to start again.");
-    return;
-  }
+  // ── Categories (multi-select keyboard) ───────────────────────────────────
+  const allCategories = await getCategories();
+  const category = await askCategories(conversation, ctx, allCategories);
+  if (category === null) return;
 
-  // ── Price (inline keyboard) ───────────────────────────────────────────────
+  // ── Price ─────────────────────────────────────────────────────────────────
   const priceKeyboard = new InlineKeyboard()
     .text("Free ✨", "price:free")
     .text("Paid 💰", "price:paid")
@@ -137,11 +349,7 @@ export async function newEventConversation(
   const url = urlRaw === "/skip" ? "" : urlRaw;
 
   // ── Tags ──────────────────────────────────────────────────────────────────
-  const tagsRaw = await askText(
-    conversation,
-    ctx,
-    "🏷 Tags, comma-separated (or /skip):"
-  );
+  const tagsRaw = await askText(conversation, ctx, "🏷 Tags, comma-separated (or /skip):");
   if (tagsRaw === null) return;
   const tags =
     tagsRaw === "/skip"
@@ -165,7 +373,6 @@ export async function newEventConversation(
     const buf = Buffer.from(await res.arrayBuffer());
     photoBase64 = buf.toString("base64");
   }
-  // If user sent /skip or any other message → no photo, continue
 
   // ── Summary + confirm ─────────────────────────────────────────────────────
   const summary = [
@@ -203,7 +410,7 @@ export async function newEventConversation(
   // ── Save to Supabase ──────────────────────────────────────────────────────
   await ctx.reply("⏳ Saving event…");
 
-  const { error: dbError } = await supabase.from("events").insert({
+  const { error: dbError } = await getSupabase().from("events").insert({
     id,
     name,
     slug: id,
@@ -248,3 +455,4 @@ export async function newEventConversation(
     );
   }
 }
+

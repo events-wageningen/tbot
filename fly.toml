@@ -1,8 +1,24 @@
-app = "events-wageningen-bot"
-primary_region = "ams"
+# fly.toml app configuration file generated for events-wageningen-bot on 2026-04-22T21:18:39+02:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'events-wageningen-bot'
+primary_region = 'ams'
 
 [build]
 
+[deploy]
+  strategy = "immediate"
+
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "256mb"
+  size = 'shared-cpu-1x'
+  memory = '256mb'
+  count = 1
+
+[[restart]]
+  policy = 'always'
+  max_retries = 10
+
+[processes]
+  app = "npx tsx src/index.ts"

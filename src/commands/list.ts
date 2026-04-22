@@ -1,11 +1,11 @@
 import type { Context } from "grammy";
-import { supabase } from "../lib/supabase.js";
+import { getSupabase } from "../lib/supabase.js";
 import { formatDate, formatTime } from "../lib/format.js";
 
 export async function listCommand(ctx: Context): Promise<void> {
   const now = new Date().toISOString();
 
-  const { data, error } = await supabase
+  const { data, error } = await getSupabase()
     .from("events")
     .select("id, name, start_date, location_name, location_city, price, status")
     .eq("status", "scheduled")
