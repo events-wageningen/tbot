@@ -291,6 +291,52 @@ async function askCity(
   }
 }
 
+// ── Map pin (optional) ──────────────────────────────────────────────────────────────
+
+async function askMapLocation(
+  conversation: BotConversation,
+  ctx: BotContext
+): Promise<{ lat: number; lon: number } | "__skip__" | null> {
+  await ctx.reply(
+    "\uD83D\uDCCD *Optional map pin*\n\n" +
+    "Tap \uD83D\uDCCE \u2192 Location in Telegram, browse the map, drag the pin to the venue, and send it.\n" +
+    "Tip: use the search bar in the location picker to navigate to the city first.\n\n" +
+    "Type /skip to skip, or /cancel to abort.",
+    { parse_mode: "Markdown" }
+  );
+
+  while (true) {
+    const upd = await conversation.wait();
+    const text = upd.message?.text?.trim();
+    if (text === "/cancel") { await ctx.reply("\u274c Cancelled."); return null; }
+    if (text === "/skip") return "__skip__";
+
+    if (upd.message?.location) {
+      const { latitude, longitude } = upd.message.location;
+      const kb = new InlineKeyboard()
+        .text("\u2705 Confirm", "loc:yes")
+        .text("\uD83D\uDD04 Retry", "loc:retry");
+      await ctx.reply(
+        `\uD83D\uDCCD Pin placed at *${latitude.toFixed(6)}, ${longitude.toFixed(6)}*\n\nUse this location?`,
+        { parse_mode: "Markdown", reply_markup: kb }
+      );
+      while (true) {
+        const cbUpd = await conversation.wait();
+        if (cbUpd.message?.text?.trim() === "/cancel") { await ctx.reply("\u274c Cancelled."); return null; }
+        if (cbUpd.callbackQuery?.data === "loc:yes") {
+          await cbUpd.answerCallbackQuery();
+          return { lat: latitude, lon: longitude };
+        }
+        if (cbUpd.callbackQuery?.data === "loc:retry") {
+          await cbUpd.answerCallbackQuery();
+          await ctx.reply("OK, drop the pin again:");
+          break;
+        }
+      }
+    }
+  }
+}
+
 // ── Plain text helper ─────────────────────────────────────────────────────────
 
 async function askText(
@@ -349,7 +395,11 @@ export async function newEventConversation(
 
   const locationCity = await askCity(conversation, ctx);
   if (locationCity === null) return;
-
+  // ── Map pin (optional) ────────────────────────────────────────────────
+  const mapLoc = await askMapLocation(conversation, ctx);
+  if (mapLoc === null) return;
+  const lat = mapLoc === "__skip__" ? null : mapLoc.lat;
+  const lon = mapLoc === "__skip__" ? null : mapLoc.lon;
   // ── Categories (multi-select keyboard) ───────────────────────────────────
   const allCategories = await getCategories();
   const category = await askCategories(conversation, ctx, allCategories);
@@ -405,7 +455,7 @@ export async function newEventConversation(
     `*📌 ${name}*`,
     `ID: \`${id}\``,
     `📅 ${startDateRaw} ${startTimeRaw} → ${endDateStr} ${endTimeRaw}`,
-    `📍 ${locationName}, ${locationCity}`,
+    `📍 ${locationName}, ${locationCity}` + (lat != null ? ` (📌 ${lat.toFixed(5)}, ${lon!.toFixed(5)})` : ""),
     `🏷 ${category.join(", ")}`,
     `💰 ${price}`,
     `📋 ${description.length > 100 ? description.slice(0, 100) + "…" : description}`,
@@ -445,6 +495,8 @@ export async function newEventConversation(
     end_date: endDate,
     location_name: locationName,
     location_city: locationCity,
+    lat,
+    lon,
     category,
     tags,
     url,
