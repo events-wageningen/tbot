@@ -79,5 +79,12 @@ bot.catch((err) => {
 process.once("SIGINT", () => bot.stop());
 process.once("SIGTERM", () => bot.stop());
 
+// Register commands with Telegram (shows the "/" menu near the keyboard)
+await bot.api.setMyCommands([
+  { command: "new",    description: "Add a new event" },
+  { command: "list",   description: "List upcoming events" },
+  { command: "cancel", description: "Cancel current operation" },
+]);
+
 console.log("Bot starting (long polling)…");
 bot.start();
