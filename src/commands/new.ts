@@ -264,6 +264,33 @@ async function askCategories(
   }
 }
 
+// ── City picker ──────────────────────────────────────────────────────────────
+
+const CITIES = ["Wageningen", "Droevendaal", "Bennekom", "Renkum", "Ede", "Rhenen"];
+
+async function askCity(
+  conversation: BotConversation,
+  ctx: BotContext
+): Promise<string | null> {
+  const kb = new InlineKeyboard();
+  CITIES.forEach((city, i) => {
+    kb.text(city, `city:${city}`);
+    if (i % 2 === 1) kb.row();
+  });
+  if (CITIES.length % 2 !== 0) kb.row();
+
+  await ctx.reply("🏙 City:", { reply_markup: kb });
+
+  while (true) {
+    const upd = await conversation.wait();
+    if (upd.message?.text?.trim() === "/cancel") { await ctx.reply("❌ Cancelled."); return null; }
+    if (upd.callbackQuery?.data?.startsWith("city:")) {
+      await upd.answerCallbackQuery();
+      return upd.callbackQuery.data.replace("city:", "");
+    }
+  }
+}
+
 // ── Plain text helper ─────────────────────────────────────────────────────────
 
 async function askText(
@@ -320,9 +347,8 @@ export async function newEventConversation(
   const locationName = await askText(conversation, ctx, "📍 Venue name:");
   if (locationName === null) return;
 
-  const cityRaw = await askText(conversation, ctx, "🏙 City (default: Wageningen):");
-  if (cityRaw === null) return;
-  const locationCity = cityRaw || "Wageningen";
+  const locationCity = await askCity(conversation, ctx);
+  if (locationCity === null) return;
 
   // ── Categories (multi-select keyboard) ───────────────────────────────────
   const allCategories = await getCategories();

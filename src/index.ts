@@ -9,6 +9,8 @@ import {
 } from "@grammyjs/conversations";
 import { authMiddleware } from "./middleware/auth.js";
 import { newEventConversation } from "./commands/new.js";
+import { removeEventConversation } from "./commands/remove.js";
+import { modifyEventConversation } from "./commands/modify.js";
 import { listCommand } from "./commands/list.js";
 
 // ── Validate required env vars at startup ────────────────────────────────────
@@ -47,6 +49,8 @@ bot.use(conversations());
 
 // Register conversation handlers
 bot.use(createConversation(newEventConversation));
+bot.use(createConversation(removeEventConversation));
+bot.use(createConversation(modifyEventConversation));
 
 // ── Commands ──────────────────────────────────────────────────────────────────
 bot.command("start", (ctx) =>
@@ -54,12 +58,22 @@ bot.command("start", (ctx) =>
     "👋 Hi! Available commands:\n" +
       "/new — add a new event\n" +
       "/list — list upcoming events\n" +
+      "/remove — remove an event\n" +
+      "/modify — edit an event\n" +
       "/cancel — cancel current operation"
   )
 );
 
 bot.command("new", (ctx) =>
   ctx.conversation.enter("newEventConversation")
+);
+
+bot.command("remove", (ctx) =>
+  ctx.conversation.enter("removeEventConversation")
+);
+
+bot.command("modify", (ctx) =>
+  ctx.conversation.enter("modifyEventConversation")
 );
 
 bot.command("list", listCommand);
@@ -83,6 +97,9 @@ process.once("SIGTERM", () => bot.stop());
 await bot.api.setMyCommands([
   { command: "new",    description: "Add a new event" },
   { command: "list",   description: "List upcoming events" },
+  { command: "remove", description: "Remove an event" },
+  { command: "modify", description: "Edit an event" },
+  { command: "skip",   description: "Skip optional field (use during /new or /modify)" },
   { command: "cancel", description: "Cancel current operation" },
 ]);
 
