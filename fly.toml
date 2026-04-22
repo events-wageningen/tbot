@@ -1,0 +1,8 @@
+app = "events-wageningen-bot"
+primary_region = "ams"
+
+[build]
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
