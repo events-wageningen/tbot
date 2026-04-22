@@ -472,7 +472,7 @@ export async function modifyEventConversation(
         const photoUpd = await conversation.wait();
         if (photoUpd.message?.text?.trim() === "/cancel") { await ctx.reply("❌ Cancelled."); return; }
         if (photoUpd.message?.photo && photoUpd.message.photo.length > 0) {
-          const largest = photoUpd.message.photo[photoUpd.message.photo.length - 1];
+          const largest = photoUpd.message.photo[photoUpd.message.photo.length - 1]!;
           const fileInfo = await photoUpd.api.getFile(largest.file_id);
           const fileUrl = `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${fileInfo.file_path}`;
           const res = await fetch(fileUrl);

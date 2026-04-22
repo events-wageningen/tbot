@@ -118,8 +118,8 @@ async function askEndDate(
   startDateYMD: string
 ): Promise<string | null> {
   const [y, m, d] = startDateYMD.split("-");
-  const monthName = MONTH_LABELS[parseInt(m) - 1];
-  const display = `${parseInt(d)} ${monthName} ${y}`;
+  const monthName = MONTH_LABELS[parseInt(m ?? "1") - 1] ?? "Jan";
+  const display = `${parseInt(d ?? "1")} ${monthName} ${y ?? ""}`;
 
   const kb = new InlineKeyboard()
     .text(`📅 Same (${display})`, "dp:end:same")
@@ -377,7 +377,7 @@ export async function newEventConversation(
   const startTimeRaw = await askTime(conversation, ctx, "⏰ Start time:");
   if (startTimeRaw === null) return;
 
-  const year = parseInt(startDateRaw.split("-")[0]);
+  const year = parseInt(startDateRaw.split("-")[0] ?? "2025");
   const id = toEventId(name, year);
   const startDate = `${startDateRaw}T${startTimeRaw}:00`;
 
@@ -442,7 +442,7 @@ export async function newEventConversation(
     return;
   }
   if (photoCtx.message?.photo && photoCtx.message.photo.length > 0) {
-    const largest = photoCtx.message.photo[photoCtx.message.photo.length - 1];
+    const largest = photoCtx.message.photo[photoCtx.message.photo.length - 1]!;
     const fileInfo = await photoCtx.api.getFile(largest.file_id);
     const fileUrl = `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${fileInfo.file_path}`;
     const res = await fetch(fileUrl);
