@@ -455,12 +455,15 @@ export async function newEventConversation(
   const url = urlRaw === "/skip" ? "" : urlRaw;
 
   // ── Tags ──────────────────────────────────────────────────────────────────
-  const tagsRaw = await askText(conversation, ctx, "🏷 Tags, comma-separated (or /skip):");
+  const tagsRaw = await askText(conversation, ctx, "🏷 Tags — comma or space separated, # optional (or /skip):");
   if (tagsRaw === null) return;
   const tags =
     tagsRaw === "/skip"
       ? []
-      : tagsRaw.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean);
+      : tagsRaw
+          .split(/[\s,]+/)
+          .map((t) => t.replace(/^#+/, "").trim().toLowerCase())
+          .filter(Boolean);
 
   // ── Photo ─────────────────────────────────────────────────────────────────
   let photoBase64: string | undefined;

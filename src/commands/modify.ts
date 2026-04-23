@@ -444,9 +444,9 @@ export async function modifyEventConversation(
         break;
       }
       case "tags": {
-        const v = await askText(conversation, ctx, "# New tags, comma-separated", true);
+        const v = await askText(conversation, ctx, "# New tags — comma or space separated, # optional", true);
         if (v === null) return;
-        updates.tags = v === "__skip__" ? [] : v.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean);
+        updates.tags = v === "__skip__" ? [] : v.split(/[\s,]+/).map((t) => t.replace(/^#+/, "").trim().toLowerCase()).filter(Boolean);
         break;
       }
       case "map_location": {
