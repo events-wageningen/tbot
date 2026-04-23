@@ -371,23 +371,53 @@ export async function newEventConversation(
   if (!name) { await ctx.reply("⚠️ Name cannot be empty. Use /new to start again."); return; }
 
   // ── Start date / time ─────────────────────────────────────────────────────
-  const startDateRaw = await askDate(conversation, ctx, "📅 Start date:");
+  let startDateRaw = await askDate(conversation, ctx, "📅 Start date:");
   if (startDateRaw === null) return;
 
-  const startTimeRaw = await askTime(conversation, ctx, "⏰ Start time:");
+  let startTimeRaw = await askTime(conversation, ctx, "⏰ Start time:");
   if (startTimeRaw === null) return;
+
+  let startDate = `${startDateRaw}T${startTimeRaw}:00`;
+
+  // ── End date / time (with validation loop) ────────────────────────────────
+  let endDateStr!: string;
+  let endTimeRaw!: string;
+  let endDate!: string;
+
+  while (true) {
+    endDateStr = await askEndDate(conversation, ctx, startDateRaw) as string;
+    if (endDateStr === null) return;
+
+    endTimeRaw = await askTime(conversation, ctx, "⏰ End time:") as string;
+    if (endTimeRaw === null) return;
+
+    endDate = `${endDateStr}T${endTimeRaw}:00`;
+
+    if (new Date(endDate) > new Date(startDate)) break;
+
+    const fixKb = new InlineKeyboard()
+      .text("🔄 Change end date/time", "endfix:retry")
+      .row()
+      .text("✏️ Edit start date/time", "endfix:start");
+    await ctx.reply(
+      "⚠️ End date and time cannot be before or the same as start date and time.\nWhat would you like to do?",
+      { reply_markup: fixKb }
+    );
+    const fixUpd = await conversation.wait();
+    if (fixUpd.callbackQuery) await fixUpd.answerCallbackQuery();
+
+    if (fixUpd.callbackQuery?.data === "endfix:start") {
+      startDateRaw = await askDate(conversation, ctx, "📅 New start date:") as string;
+      if (startDateRaw === null) return;
+      startTimeRaw = await askTime(conversation, ctx, "⏰ New start time:") as string;
+      if (startTimeRaw === null) return;
+      startDate = `${startDateRaw}T${startTimeRaw}:00`;
+    }
+    // both branches loop back to re-ask end date/time
+  }
 
   const year = parseInt(startDateRaw.split("-")[0] ?? "2025");
   const id = toEventId(name, year);
-  const startDate = `${startDateRaw}T${startTimeRaw}:00`;
-
-  // ── End date / time ───────────────────────────────────────────────────────
-  const endDateStr = await askEndDate(conversation, ctx, startDateRaw);
-  if (endDateStr === null) return;
-
-  const endTimeRaw = await askTime(conversation, ctx, "⏰ End time:");
-  if (endTimeRaw === null) return;
-  const endDate = `${endDateStr}T${endTimeRaw}:00`;
 
   // ── Venue / city ──────────────────────────────────────────────────────────
   const locationName = await askText(conversation, ctx, "📍 Venue name:");
