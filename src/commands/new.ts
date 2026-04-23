@@ -527,6 +527,7 @@ export async function newEventConversation(
     location_city: locationCity,
     lat,
     lon,
+    creator_telegram_id: ctx.from?.id ?? null,
     category,
     tags,
     url,
