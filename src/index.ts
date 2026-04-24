@@ -169,14 +169,30 @@ bot.use(createConversation(newEventConversation));
 bot.use(createConversation(removeEventConversation));
 bot.use(createConversation(modifyEventConversation));
 
-// ── Post-conversations middleware: handle pending conversation switch ──────────
+// ── Post-conversations middleware: handle pending switch + cleanup after finish
 // Runs after conversations() so ctx.conversation.enter() is available.
 bot.use(async (ctx, next) => {
+  const userId = ctx.from?.id.toString();
+
+  // If a conversation was running and has now finished (session.conversation is
+  // empty after this update), clear the idle timer immediately so no spurious
+  // warning fires after the operation completes.
+  if (userId && ctx.session.activeConversation) {
+    const sess = ctx.session as BotSession & { conversation?: Record<string, unknown> };
+    const hasRunningConv =
+      sess.conversation != null &&
+      typeof sess.conversation === "object" &&
+      Object.keys(sess.conversation as object).length > 0;
+    if (!hasRunningConv) {
+      clearIdleTimer(userId);
+      ctx.session.activeConversation = undefined;
+    }
+  }
+
   const pendingName = ctx.session.pendingEnter;
   if (pendingName) {
     ctx.session.pendingEnter = undefined;
     ctx.session.activeConversation = pendingName;
-    const userId = ctx.from?.id.toString();
     if (userId && ctx.chat?.id) startIdleTimer(userId, ctx.chat.id);
     await ctx.conversation.enter(
       pendingName as Parameters<typeof ctx.conversation.enter>[0],
