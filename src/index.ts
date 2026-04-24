@@ -282,7 +282,6 @@ await bot.api.setMyCommands([
   { command: "list",   description: "List upcoming events" },
   { command: "remove", description: "Remove an event" },
   { command: "modify", description: "Edit an event" },
-  { command: "skip",   description: "Skip optional field (use during /new or /modify)" },
   { command: "cancel", description: "Cancel current operation" },
 ]);
 

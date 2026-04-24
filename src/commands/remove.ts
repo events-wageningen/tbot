@@ -7,6 +7,10 @@ import { triggerDeploy } from "../lib/github.js";
 export type BotContext = Context & ConversationFlavor;
 export type BotConversation = Conversation<BotContext>;
 
+async function del(ctx: BotContext, chatId: number, messageId: number): Promise<void> {
+  try { await ctx.api.deleteMessage(chatId, messageId); } catch { /* already deleted */ }
+}
+
 export async function removeEventConversation(
   conversation: BotConversation,
   ctx: BotContext
@@ -37,16 +41,18 @@ export async function removeEventConversation(
   });
   kb.text("❌ Cancel", "rm:cancel");
 
-  await ctx.reply("🗑 *Remove event* — select an event:", {
+  const listMsg = await ctx.reply("🗑 *Remove event* — select an event:", {
     parse_mode: "Markdown",
     reply_markup: kb,
   });
+  const chatId = ctx.chat!.id;
 
   let eventId = "";
   let eventName = "";
   while (true) {
     const upd = await conversation.wait();
     if (upd.message?.text?.trim() === "/cancel") {
+      await del(ctx, chatId, listMsg.message_id);
       await ctx.reply("❌ Cancelled.");
       return;
     }
@@ -54,9 +60,11 @@ export async function removeEventConversation(
     await upd.answerCallbackQuery();
     const val = upd.callbackQuery.data.replace("rm:", "");
     if (val === "cancel") {
+      await del(ctx, chatId, listMsg.message_id);
       await ctx.reply("❌ Cancelled.");
       return;
     }
+    await del(ctx, chatId, listMsg.message_id);
     const idx = parseInt(val);
     eventId = events[idx]!.id;
     eventName = events[idx]!.name;
@@ -68,7 +76,7 @@ export async function removeEventConversation(
     .text("✅ Yes, remove it", "rmconf:yes")
     .text("❌ No, keep it", "rmconf:no");
 
-  await ctx.reply(
+  const confirmMsg = await ctx.reply(
     `⚠️ Are you sure you want to remove the event *${eventName}*?\n\nThis cannot be undone.`,
     { parse_mode: "Markdown", reply_markup: confirmKb }
   );
@@ -76,11 +84,13 @@ export async function removeEventConversation(
   while (true) {
     const upd = await conversation.wait();
     if (upd.message?.text?.trim() === "/cancel") {
+      await del(ctx, chatId, confirmMsg.message_id);
       await ctx.reply("❌ Cancelled.");
       return;
     }
     if (!upd.callbackQuery?.data?.startsWith("rmconf:")) continue;
     await upd.answerCallbackQuery();
+    await del(ctx, chatId, confirmMsg.message_id);
 
     if (upd.callbackQuery.data === "rmconf:no") {
       await ctx.reply("👍 Kept. No changes made.");
