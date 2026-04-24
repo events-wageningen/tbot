@@ -65,18 +65,15 @@ bot.command("start", (ctx) =>
 );
 
 bot.command("new", async (ctx) => {
-  await ctx.conversation.exit();
-  ctx.conversation.enter("newEventConversation");
+  await ctx.conversation.enter("newEventConversation", { overwrite: true });
 });
 
 bot.command("remove", async (ctx) => {
-  await ctx.conversation.exit();
-  ctx.conversation.enter("removeEventConversation");
+  await ctx.conversation.enter("removeEventConversation", { overwrite: true });
 });
 
 bot.command("modify", async (ctx) => {
-  await ctx.conversation.exit();
-  ctx.conversation.enter("modifyEventConversation");
+  await ctx.conversation.enter("modifyEventConversation", { overwrite: true });
 });
 
 bot.command("list", listCommand);
