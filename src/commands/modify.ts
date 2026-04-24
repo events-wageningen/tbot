@@ -257,7 +257,7 @@ async function askVenue(
   conversation: BotConversation,
   ctx: BotContext,
   presets: LocationPreset[]
-): Promise<{ name: string; lat: number | null; lon: number | null } | null> {
+): Promise<{ name: string; city?: string; lat: number | null; lon: number | null } | null> {
   const chatId = ctx.chat!.id;
   const kb = new InlineKeyboard();
   presets.forEach((p) => kb.text(`📍 ${p.name}`, `venue:${p.id}`).row());
@@ -283,7 +283,7 @@ async function askVenue(
         return { name: message.text.trim(), lat: null, lon: null };
       }
       const preset = presets.find((p) => p.id === key);
-      if (preset) return { name: preset.name, lat: preset.lat, lon: preset.lon };
+      if (preset) return { name: preset.name, city: preset.city, lat: preset.lat, lon: preset.lon };
     }
   }
 }
@@ -444,6 +444,8 @@ export async function modifyEventConversation(
           updates.lat = venueResult.lat;
           updates.lon = venueResult.lon;
         }
+        // Auto-fill city if the preset provides one
+        if (venueResult.city) updates.location_city = venueResult.city;
         break;
       }
       case "location_city": {
