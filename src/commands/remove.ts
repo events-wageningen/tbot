@@ -11,6 +11,10 @@ async function del(ctx: BotContext, chatId: number, messageId: number): Promise<
   try { await ctx.api.deleteMessage(chatId, messageId); } catch { /* already deleted */ }
 }
 
+function escHtml(s: string): string {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 export async function removeEventConversation(
   conversation: BotConversation,
   ctx: BotContext
@@ -31,7 +35,23 @@ export async function removeEventConversation(
     return;
   }
 
-  // ── Event picker ─────────────────────────────────────────────────────────
+  const chatId = ctx.chat!.id;
+
+  // ── Recap message ─────────────────────────────────────────────────────────
+  let recapMsgId = 0;
+  async function updateRecap(eventName?: string): Promise<void> {
+    const body = eventName ? `Event: ${escHtml(eventName)}` : "(selecting event...)";
+    const text = `<b>🗑 You are performing a remove event operation</b>\n<b>Current summary:</b>\n──────────────────\n${body}`;
+    if (recapMsgId === 0) {
+      const m = await ctx.reply(text, { parse_mode: "HTML" });
+      recapMsgId = m.message_id;
+    } else {
+      try {
+        await ctx.api.editMessageText(chatId, recapMsgId, text, { parse_mode: "HTML" });
+      } catch { /* not modified */ }
+    }
+  }
+  await updateRecap();
   // Use index as callback data to avoid Telegram's 64-byte button limit
   const kb = new InlineKeyboard();
   events.forEach((e, i) => {
@@ -45,7 +65,6 @@ export async function removeEventConversation(
     parse_mode: "Markdown",
     reply_markup: kb,
   });
-  const chatId = ctx.chat!.id;
 
   let eventId = "";
   let eventName = "";
@@ -68,6 +87,7 @@ export async function removeEventConversation(
     const idx = parseInt(val);
     eventId = events[idx]!.id;
     eventName = events[idx]!.name;
+    await updateRecap(eventName);
     break;
   }
 

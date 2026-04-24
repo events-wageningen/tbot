@@ -69,13 +69,16 @@ function clearIdleTimer(userId: string): void {
 
 function startIdleTimer(userId: string, chatId: number): void {
   clearIdleTimer(userId);
-  const warnTimer = setTimeout(async () => {
+  let warnTimer!: ReturnType<typeof setTimeout>;
+  warnTimer = setTimeout(async () => {
     try {
       await bot.api.sendMessage(
         chatId,
-        "⏰ Still there? This conversation will close in 1 minute if there is no more activity."
+        "⏰ Still there? This conversation will close in 5 minutes if there is no more activity."
       );
     } catch { /* ignore send errors */ }
+    // Bail if the timer was replaced while we were awaiting the sendMessage
+    if (idleTimers.get(userId) !== warnTimer) return;
 
     const closeTimer = setTimeout(async () => {
       forceCloseUsers.add(userId);
@@ -86,7 +89,7 @@ function startIdleTimer(userId: string, chatId: number): void {
           "⏰ Conversation closed due to inactivity. Use /new, /modify, or /remove to start again."
         );
       } catch { /* ignore send errors */ }
-    }, 60_000);
+    }, 300_000);
 
     idleTimers.set(userId, closeTimer);
   }, 60_000);
@@ -192,6 +195,10 @@ bot.use(async (ctx, next) => {
   const pendingName = ctx.session.pendingEnter;
   if (pendingName) {
     ctx.session.pendingEnter = undefined;
+    if (pendingName === "listCommand") {
+      await listCommand(ctx);
+      return;
+    }
     ctx.session.activeConversation = pendingName;
     if (userId && ctx.chat?.id) startIdleTimer(userId, ctx.chat.id);
     await ctx.conversation.enter(
@@ -208,6 +215,7 @@ const CONVERSATION_LABELS: Record<string, string> = {
   newEventConversation:    "new event",
   removeEventConversation: "remove event",
   modifyEventConversation: "modify event",
+  listCommand:             "event list",
 };
 
 /**
@@ -220,13 +228,19 @@ async function enterConversation(ctx: BotContext, name: string): Promise<void> {
     const currentLabel = CONVERSATION_LABELS[current] ?? current;
     const newLabel = CONVERSATION_LABELS[name] ?? name;
     const kb = new InlineKeyboard()
-      .text(`✅ Yes, start ${newLabel}`, "switch:yes")
+      .text(`✅ Yes, switch to ${newLabel}`, "switch:yes")
       .text("❌ No, keep going", "switch:no");
     ctx.session.pendingSwitch = name;
     await ctx.reply(
-      `⚠️ You are already working on a *${currentLabel}* operation.\n\nDo you want to cancel it and start a *${newLabel}* instead?`,
+      `⚠️ You are already performing a *${currentLabel}* operation. Do you want to cancel and switch to *${newLabel}* instead?`,
       { parse_mode: "Markdown", reply_markup: kb }
     );
+    return;
+  }
+
+  // listCommand is not a real conversation — run it directly without tracking
+  if (name === "listCommand") {
+    await listCommand(ctx);
     return;
   }
 
@@ -255,7 +269,7 @@ bot.command("new",    (ctx) => enterConversation(ctx, "newEventConversation"));
 bot.command("remove", (ctx) => enterConversation(ctx, "removeEventConversation"));
 bot.command("modify", (ctx) => enterConversation(ctx, "modifyEventConversation"));
 
-bot.command("list", listCommand);
+bot.command("list", (ctx) => enterConversation(ctx, "listCommand"));
 
 // /cancel exits any active conversation
 bot.command("cancel", async (ctx) => {

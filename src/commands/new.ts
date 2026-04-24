@@ -437,6 +437,11 @@ async function askVenue(
   }
 }
 
+// ── HTML escape helper (for recap) ───────────────────────────────────────────
+function escHtml(s: string): string {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 // ── Main conversation ─────────────────────────────────────────────────────────
 
 export async function newEventConversation(
@@ -444,10 +449,33 @@ export async function newEventConversation(
   ctx: BotContext
 ): Promise<void> {
   const chatId = ctx.chat!.id;
-  const introMsg = await ctx.reply(
-    "📝 *New Event* — type /cancel at any time to abort.\n\nEvent name:",
-    { parse_mode: "Markdown" }
-  );
+
+  // ── Recap message ─────────────────────────────────────────────────────────
+  type RecapEntry = { key: string; label: string; value: string };
+  const recap: RecapEntry[] = [];
+  let recapMsgId = 0;
+  function setRecap(key: string, label: string, value: string): void {
+    const existing = recap.find(r => r.key === key);
+    if (existing) existing.value = value;
+    else recap.push({ key, label, value });
+  }
+  async function updateRecap(): Promise<void> {
+    const body = recap.length > 0
+      ? recap.map(r => `${escHtml(r.label)}: ${escHtml(r.value)}`).join("\n")
+      : "(filling in...)";
+    const text = `<b>📝 You are performing a new event operation</b>\n<b>Current summary:</b>\n──────────────────\n${body}`;
+    if (recapMsgId === 0) {
+      const m = await ctx.reply(text, { parse_mode: "HTML" });
+      recapMsgId = m.message_id;
+    } else {
+      try {
+        await ctx.api.editMessageText(chatId, recapMsgId, text, { parse_mode: "HTML" });
+      } catch { /* not modified */ }
+    }
+  }
+  await updateRecap();
+
+  const introMsg = await ctx.reply("✏️ Event name: (type /cancel at any time to abort)");
 
   // ── Name ──────────────────────────────────────────────────────────────────
   const { message: nameMsg } = await conversation.waitFor("message:text");
@@ -456,6 +484,8 @@ export async function newEventConversation(
   if (nameMsg.text.trim() === "/cancel") { await ctx.reply("❌ Cancelled."); return; }
   const name = nameMsg.text.trim();
   if (!name) { await ctx.reply("⚠️ Name cannot be empty. Use /new to start again."); return; }
+  setRecap("name", "✏️ Name", name);
+  await updateRecap();
 
   // ── Start date / time ─────────────────────────────────────────────────────
   let startDateRaw = await askDate(conversation, ctx, "📅 Start date:");
@@ -465,6 +495,8 @@ export async function newEventConversation(
   if (startTimeRaw === null) return;
 
   let startDate = `${startDateRaw}T${startTimeRaw}:00`;
+  setRecap("start", "📅 Start", `${startDateRaw} · ${startTimeRaw}`);
+  await updateRecap();
 
   // ── End date / time (with validation loop) ────────────────────────────────
   let endDateStr!: string;
@@ -500,9 +532,12 @@ export async function newEventConversation(
       startTimeRaw = await askTime(conversation, ctx, "⏰ New start time:") as string;
       if (startTimeRaw === null) return;
       startDate = `${startDateRaw}T${startTimeRaw}:00`;
+      setRecap("start", "📅 Start", `${startDateRaw} · ${startTimeRaw}`);
     }
     // both branches loop back to re-ask end date/time
   }
+  setRecap("end", "📅 End", `${endDateStr} · ${endTimeRaw}`);
+  await updateRecap();
 
   const year = parseInt(startDateRaw.split("-")[0] ?? "2025");
   const id = toEventId(name, year);
@@ -516,6 +551,8 @@ export async function newEventConversation(
   // Skip city prompt if the preset already provides a city
   const locationCity = venueResult.city ?? await askCity(conversation, ctx);
   if (locationCity === null) return;
+  setRecap("venue", "📍 Venue", `${locationName}, ${locationCity}`);
+  await updateRecap();
 
   // ── Map pin (skip if preset auto-filled lat/lon) ──────────────────────────
   let lat: number | null;
@@ -533,6 +570,8 @@ export async function newEventConversation(
   const allCategories = await getCategories();
   const category = await askCategories(conversation, ctx, allCategories);
   if (category === null) return;
+  setRecap("cats", "🏷 Categories", category.join(", "));
+  await updateRecap();
 
   // ── Price ─────────────────────────────────────────────────────────────────
   const priceKeyboard = new InlineKeyboard()
@@ -544,15 +583,21 @@ export async function newEventConversation(
   await priceCbCtx.answerCallbackQuery();
   await del(ctx, chatId, priceMsg.message_id);
   const price = priceCbCtx.callbackQuery.data.replace("price:", "");
+  setRecap("price", "💰 Price", price);
+  await updateRecap();
 
   // ── Description ───────────────────────────────────────────────────────────
   const description = await askText(conversation, ctx, "📋 Description:");
   if (description === null) return;
+  setRecap("desc", "📋 Description", description.length > 80 ? description.slice(0, 80) + "…" : description);
+  await updateRecap();
 
   // ── URL ───────────────────────────────────────────────────────────────────
   const urlRaw = await askText(conversation, ctx, "🔗 Event URL (or /skip):");
   if (urlRaw === null) return;
   const url = urlRaw === "/skip" ? "" : urlRaw;
+  setRecap("url", "🔗 URL", url || "—");
+  await updateRecap();
 
   // ── Tags ──────────────────────────────────────────────────────────────────
   const tagsRaw = await askText(conversation, ctx, "🏷 Tags — comma or space separated, # optional (or /skip):");
@@ -564,6 +609,8 @@ export async function newEventConversation(
           .split(/[\s,]+/)
           .map((t) => t.replace(/^#+/, "").trim().toLowerCase())
           .filter(Boolean);
+  setRecap("tags", "# Tags", tags.length > 0 ? tags.join(", ") : "—");
+  await updateRecap();
 
   // ── Photo ─────────────────────────────────────────────────────────────────
   let photoBase64: string | undefined;
@@ -584,6 +631,8 @@ export async function newEventConversation(
     const buf = Buffer.from(await res.arrayBuffer());
     photoBase64 = buf.toString("base64");
   }
+  setRecap("photo", "🖼️ Photo", photoBase64 ? "✅" : "—");
+  await updateRecap();
 
   // ── Summary + confirm ─────────────────────────────────────────────────────
   const summary = [

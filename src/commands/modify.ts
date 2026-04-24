@@ -307,6 +307,11 @@ const FIELDS: { id: string; label: string }[] = [
   { id: "map_location",  label: "📍 Map pin" },
 ];
 
+// ── HTML escape helper (for recap) ───────────────────────────────────────────
+function escHtml(s: string): string {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 // ── Main conversation ─────────────────────────────────────────────────────────
 
 export async function modifyEventConversation(
@@ -323,6 +328,32 @@ export async function modifyEventConversation(
   if (!events || events.length === 0) { await ctx.reply("No events found."); return; }
 
   const chatId = ctx.chat!.id;
+
+  // ── Recap message ─────────────────────────────────────────────────────────
+  const recapValues: { label: string; value: string }[] = [];
+  let recapMsgId = 0;
+  function setRecapValue(label: string, value: string): void {
+    const existing = recapValues.find(v => v.label === label);
+    if (existing) existing.value = value;
+    else recapValues.push({ label, value });
+  }
+  async function updateRecap(eventLabel?: string, fieldsLabel?: string): Promise<void> {
+    const lines: string[] = [];
+    if (eventLabel) lines.push(`Event: ${escHtml(eventLabel)}`);
+    if (fieldsLabel) lines.push(`Fields: ${escHtml(fieldsLabel)}`);
+    recapValues.forEach(v => lines.push(`${escHtml(v.label)}: ${escHtml(v.value)}`));
+    const body = lines.length > 0 ? lines.join("\n") : "(selecting event...)";
+    const text = `<b>✏️ You are performing a modify event operation</b>\n<b>Current summary:</b>\n──────────────────\n${body}`;
+    if (recapMsgId === 0) {
+      const m = await ctx.reply(text, { parse_mode: "HTML" });
+      recapMsgId = m.message_id;
+    } else {
+      try {
+        await ctx.api.editMessageText(chatId, recapMsgId, text, { parse_mode: "HTML" });
+      } catch { /* not modified */ }
+    }
+  }
+  await updateRecap();
 
   // ── Event picker ──────────────────────────────────────────────────────────
   // Use index as callback data to avoid Telegram's 64-byte button limit
@@ -354,7 +385,10 @@ export async function modifyEventConversation(
   }
 
   const event = events.find((e) => e.id === eventId)!
-
+  // Update recap with selected event
+  const evDate = new Date(event.start_date as string);
+  const evLabel = `${event.name} (${evDate.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })})`;
+  await updateRecap(evLabel);
   // ── Field picker (multi-select) ───────────────────────────────────────────
   const selectedFields = new Set<string>();
 
@@ -375,6 +409,7 @@ export async function modifyEventConversation(
     { parse_mode: "Markdown", reply_markup: buildFieldKb() }
   );
   const fieldMsgId = fieldMsg.message_id;
+  let fieldsLabel = "";
 
   while (true) {
     const upd = await conversation.wait();
@@ -385,6 +420,10 @@ export async function modifyEventConversation(
     if (val === "done") {
       if (selectedFields.size === 0) { await upd.answerCallbackQuery("⚠️ Select at least one field"); continue; }
       await del(ctx, chatId, fieldMsgId);
+      // Update recap with selected field labels
+      const fl = FIELDS.filter(f => selectedFields.has(f.id)).map(f => f.label).join(", ");
+      fieldsLabel = fl;
+      await updateRecap(evLabel, fieldsLabel);
       break;
     }
     if (selectedFields.has(val)) selectedFields.delete(val); else selectedFields.add(val);
@@ -409,30 +448,40 @@ export async function modifyEventConversation(
         const v = await askText(conversation, ctx, "✏️ New name:");
         if (v === null) return;
         updates.name = v;
+        setRecapValue("✏️ Name", v);
+        await updateRecap(evLabel, fieldsLabel);
         break;
       }
       case "start_date": {
         const v = await askDate(conversation, ctx, "📅 New start date");
         if (v === null) return;
         startDateYMD = v;
+        setRecapValue("📅 Start date", v);
+        await updateRecap(evLabel, fieldsLabel);
         break;
       }
       case "start_time": {
         const v = await askTime(conversation, ctx, "⏰ New start time:");
         if (v === null) return;
         startTimeHM = v;
+        setRecapValue("⏰ Start time", v);
+        await updateRecap(evLabel, fieldsLabel);
         break;
       }
       case "end_date": {
         const v = await askDate(conversation, ctx, "📅 New end date");
         if (v === null) return;
         endDateYMD = v;
+        setRecapValue("📅 End date", v);
+        await updateRecap(evLabel, fieldsLabel);
         break;
       }
       case "end_time": {
         const v = await askTime(conversation, ctx, "⏰ New end time:");
         if (v === null) return;
         endTimeHM = v;
+        setRecapValue("⏰ End time", v);
+        await updateRecap(evLabel, fieldsLabel);
         break;
       }
       case "location_name": {
@@ -446,12 +495,16 @@ export async function modifyEventConversation(
         }
         // Auto-fill city if the preset provides one
         if (venueResult.city) updates.location_city = venueResult.city;
+        setRecapValue("📍 Venue", venueResult.name + (venueResult.city ? `, ${venueResult.city}` : ""));
+        await updateRecap(evLabel, fieldsLabel);
         break;
       }
       case "location_city": {
         const v = await askCity(conversation, ctx);
         if (v === null) return;
         updates.location_city = v;
+        setRecapValue("🏙 City", v);
+        await updateRecap(evLabel, fieldsLabel);
         break;
       }
       case "category": {
@@ -460,6 +513,8 @@ export async function modifyEventConversation(
         const v = await askCategories(conversation, ctx, allCategories, current);
         if (v === null) return;
         updates.category = v;
+        setRecapValue("🏷 Categories", v.join(", "));
+        await updateRecap(evLabel, fieldsLabel);
         break;
       }
       case "price": {
@@ -472,24 +527,32 @@ export async function modifyEventConversation(
         await cbCtx.answerCallbackQuery();
         await del(ctx, chatId, priceMsg.message_id);
         updates.price = cbCtx.callbackQuery.data.replace("price:", "");
+        setRecapValue("💰 Price", updates.price as string);
+        await updateRecap(evLabel, fieldsLabel);
         break;
       }
       case "description": {
         const v = await askText(conversation, ctx, "📋 New description:");
         if (v === null) return;
         updates.description = v;
+        setRecapValue("📋 Description", v.length > 80 ? v.slice(0, 80) + "…" : v);
+        await updateRecap(evLabel, fieldsLabel);
         break;
       }
       case "url": {
         const v = await askText(conversation, ctx, "🔗 New URL", true);
         if (v === null) return;
         updates.url = v === "__skip__" ? "" : v;
+        setRecapValue("🔗 URL", (updates.url as string) || "—");
+        await updateRecap(evLabel, fieldsLabel);
         break;
       }
       case "tags": {
         const v = await askText(conversation, ctx, "# New tags — comma or space separated, # optional", true);
         if (v === null) return;
         updates.tags = v === "__skip__" ? [] : v.split(/[\s,]+/).map((t) => t.replace(/^#+/, "").trim().toLowerCase()).filter(Boolean);
+        setRecapValue("# Tags", (updates.tags as string[]).length > 0 ? (updates.tags as string[]).join(", ") : "—");
+        await updateRecap(evLabel, fieldsLabel);
         break;
       }
       case "map_location": {
@@ -498,7 +561,11 @@ export async function modifyEventConversation(
         if (v !== "__skip__") {
           updates.lat = v.lat;
           updates.lon = v.lon;
+          setRecapValue("📍 Map pin", `${v.lat.toFixed(5)}, ${v.lon.toFixed(5)}`);
+        } else {
+          setRecapValue("📍 Map pin", "skipped");
         }
+        await updateRecap(evLabel, fieldsLabel);
         break;
       }
       case "photo": {
@@ -514,6 +581,8 @@ export async function modifyEventConversation(
           const res = await fetch(fileUrl);
           newPhotoBase64 = Buffer.from(await res.arrayBuffer()).toString("base64");
         }
+        setRecapValue("🖼 Photo", newPhotoBase64 ? "✅" : "skipped");
+        await updateRecap(evLabel, fieldsLabel);
         break;
       }
     }
