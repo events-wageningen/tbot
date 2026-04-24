@@ -28,11 +28,12 @@ export async function removeEventConversation(
   }
 
   // ── Event picker ─────────────────────────────────────────────────────────
+  // Use index as callback data to avoid Telegram's 64-byte button limit
   const kb = new InlineKeyboard();
-  events.forEach((e) => {
+  events.forEach((e, i) => {
     const date = new Date(e.start_date as string);
     const label = `${e.name} (${date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })})`;
-    kb.text(label, `rm:${e.id}`).row();
+    kb.text(label, `rm:${i}`).row();
   });
   kb.text("❌ Cancel", "rm:cancel");
 
@@ -56,8 +57,9 @@ export async function removeEventConversation(
       await ctx.reply("❌ Cancelled.");
       return;
     }
-    eventId = val;
-    eventName = events.find((e) => e.id === val)?.name ?? val;
+    const idx = parseInt(val);
+    eventId = events[idx]!.id;
+    eventName = events[idx]!.name;
     break;
   }
 

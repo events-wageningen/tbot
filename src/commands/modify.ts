@@ -325,11 +325,12 @@ export async function modifyEventConversation(
   const chatId = ctx.chat!.id;
 
   // ── Event picker ──────────────────────────────────────────────────────────
+  // Use index as callback data to avoid Telegram's 64-byte button limit
   const listKb = new InlineKeyboard();
-  events.forEach((e) => {
+  events.forEach((e, i) => {
     const date = new Date(e.start_date as string);
     const label = `${e.name} (${date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })})`;
-    listKb.text(label, `mod:ev:${e.id}`).row();
+    listKb.text(label, `mod:ev:${i}`).row();
   });
   listKb.text("❌ Cancel", "mod:ev:cancel");
 
@@ -347,7 +348,8 @@ export async function modifyEventConversation(
     const val = upd.callbackQuery.data.replace("mod:ev:", "");
     if (val === "cancel") { await del(ctx, chatId, listMsg.message_id); await ctx.reply("❌ Cancelled."); return; }
     await del(ctx, chatId, listMsg.message_id);
-    eventId = val;
+    const idx = parseInt(val);
+    eventId = events[idx]!.id;
     break;
   }
 
