@@ -1,12 +1,17 @@
 import { InlineKeyboard } from "grammy";
 import type { Conversation, ConversationFlavor } from "@grammyjs/conversations";
 import type { Context } from "grammy";
-import { getSupabase, getCategories, type Category } from "../lib/supabase.js";
+import { getSupabase, getCategories, getLocations, type Category, type LocationPreset } from "../lib/supabase.js";
 import { uploadImage, triggerDeploy } from "../lib/github.js";
 import { toEventId } from "../lib/slugify.js";
 
 export type BotContext = Context & ConversationFlavor;
 export type BotConversation = Conversation<BotContext>;
+
+// ── Delete helper (silently ignores errors, e.g. msg already deleted) ─────────
+async function del(ctx: BotContext, chatId: number, msgId: number): Promise<void> {
+  try { await ctx.api.deleteMessage(chatId, msgId); } catch { /* ignore */ }
+}
 
 // ── Date picker helpers ───────────────────────────────────────────────────────
 
@@ -33,80 +38,79 @@ async function askDate(
   ctx: BotContext,
   prompt: string
 ): Promise<string | null> {
+  const chatId = ctx.chat!.id;
   const thisYear = new Date().getFullYear();
 
-  // ── Step 1: Year ──────────────────────────────────────────────────────────
   const yearKb = new InlineKeyboard()
     .text(String(thisYear), `dp:y:${thisYear}`)
     .text(String(thisYear + 1), `dp:y:${thisYear + 1}`);
-
-  await ctx.reply(`📅 ${prompt} — pick a year:`, { reply_markup: yearKb });
+  const yearMsg = await ctx.reply(`📅 ${prompt} — pick a year:`, { reply_markup: yearKb });
 
   let year = 0;
   while (true) {
     const upd = await conversation.wait();
     if (upd.message?.text?.trim() === "/cancel") {
+      await del(ctx, chatId, yearMsg.message_id);
       await ctx.reply("❌ Cancelled. Use /new to start again.");
       return null;
     }
     if (upd.callbackQuery?.data?.startsWith("dp:y:")) {
       await upd.answerCallbackQuery();
       year = parseInt(upd.callbackQuery.data.replace("dp:y:", ""));
+      await del(ctx, chatId, yearMsg.message_id);
       break;
     }
   }
 
-  // ── Step 2: Month ─────────────────────────────────────────────────────────
   const monthKb = new InlineKeyboard();
   MONTH_LABELS.forEach((label, i) => {
     monthKb.text(label, `dp:m:${i + 1}`);
     if (i % 4 === 3) monthKb.row();
   });
-
-  await ctx.reply(`📅 ${prompt} ${year} — pick a month:`, { reply_markup: monthKb });
+  const monthMsg = await ctx.reply(`📅 ${prompt} ${year} — pick a month:`, { reply_markup: monthKb });
 
   let month = 0;
   while (true) {
     const upd = await conversation.wait();
     if (upd.message?.text?.trim() === "/cancel") {
+      await del(ctx, chatId, monthMsg.message_id);
       await ctx.reply("❌ Cancelled. Use /new to start again.");
       return null;
     }
     if (upd.callbackQuery?.data?.startsWith("dp:m:")) {
       await upd.answerCallbackQuery();
       month = parseInt(upd.callbackQuery.data.replace("dp:m:", ""));
+      await del(ctx, chatId, monthMsg.message_id);
       break;
     }
   }
 
-  // ── Step 3: Day ───────────────────────────────────────────────────────────
   const totalDays = daysInMonth(year, month);
   const dayKb = new InlineKeyboard();
   for (let d = 1; d <= totalDays; d++) {
     dayKb.text(String(d), `dp:d:${d}`);
     if (d % 7 === 0) dayKb.row();
   }
-
   const monthName = MONTH_LABELS[month - 1];
-  await ctx.reply(`📅 ${prompt} ${monthName} ${year} — pick a day:`, { reply_markup: dayKb });
+  const dayMsg = await ctx.reply(`📅 ${prompt} ${monthName} ${year} — pick a day:`, { reply_markup: dayKb });
 
   let day = 0;
   while (true) {
     const upd = await conversation.wait();
     if (upd.message?.text?.trim() === "/cancel") {
+      await del(ctx, chatId, dayMsg.message_id);
       await ctx.reply("❌ Cancelled. Use /new to start again.");
       return null;
     }
     if (upd.callbackQuery?.data?.startsWith("dp:d:")) {
       await upd.answerCallbackQuery();
       day = parseInt(upd.callbackQuery.data.replace("dp:d:", ""));
+      await del(ctx, chatId, dayMsg.message_id);
       break;
     }
   }
 
-  const result = formatYMD(year, month, day);
-  await ctx.reply(`📅 Selected: ${day} ${monthName} ${year}`);
-  return result;
+  return formatYMD(year, month, day);
 }
 
 /**
@@ -117,6 +121,7 @@ async function askEndDate(
   ctx: BotContext,
   startDateYMD: string
 ): Promise<string | null> {
+  const chatId = ctx.chat!.id;
   const [y, m, d] = startDateYMD.split("-");
   const monthName = MONTH_LABELS[parseInt(m ?? "1") - 1] ?? "Jan";
   const display = `${parseInt(d ?? "1")} ${monthName} ${y ?? ""}`;
@@ -124,33 +129,34 @@ async function askEndDate(
   const kb = new InlineKeyboard()
     .text(`📅 Same (${display})`, "dp:end:same")
     .text("📅 Other date", "dp:end:other");
-
-  await ctx.reply("📅 End date:", { reply_markup: kb });
+  const msg = await ctx.reply("📅 End date:", { reply_markup: kb });
 
   while (true) {
     const upd = await conversation.wait();
     if (upd.message?.text?.trim() === "/cancel") {
+      await del(ctx, chatId, msg.message_id);
       await ctx.reply("❌ Cancelled. Use /new to start again.");
       return null;
     }
     if (upd.callbackQuery?.data === "dp:end:same") {
       await upd.answerCallbackQuery();
-      await ctx.reply(`📅 End date: same as start (${display})`);
+      await del(ctx, chatId, msg.message_id);
       return startDateYMD;
     }
     if (upd.callbackQuery?.data === "dp:end:other") {
       await upd.answerCallbackQuery();
+      await del(ctx, chatId, msg.message_id);
       return await askDate(conversation, ctx, "End date");
     }
   }
 }
 
-/** Ask for a time via inline keyboard (common times) or free text. Returns HH:MM or null. */
 async function askTime(
   conversation: BotConversation,
   ctx: BotContext,
   prompt: string
 ): Promise<string | null> {
+  const chatId = ctx.chat!.id;
   const times = [
     "08:00","09:00","10:00",
     "11:00","12:00","13:00",
@@ -165,39 +171,48 @@ async function askTime(
   });
   kb.row().text("✍️ Other", "time:other");
 
-  await ctx.reply(prompt, { reply_markup: kb });
+  const timeMsg = await ctx.reply(prompt, { reply_markup: kb });
 
   while (true) {
     const upd = await conversation.wait();
-
     if (upd.message?.text?.trim() === "/cancel") {
+      await del(ctx, chatId, timeMsg.message_id);
       await ctx.reply("❌ Cancelled. Use /new to start again.");
       return null;
     }
-
     if (upd.callbackQuery?.data?.startsWith("time:")) {
       await upd.answerCallbackQuery();
       const val = upd.callbackQuery.data.replace("time:", "");
-      if (val !== "other") return val;
-
-      // Ask for free-text time
-      await ctx.reply("⏰ Enter time (HH:MM):");
+      if (val !== "other") {
+        await del(ctx, chatId, timeMsg.message_id);
+        return val;
+      }
+      await del(ctx, chatId, timeMsg.message_id);
+      const otherMsg = await ctx.reply("⏰ Enter time (HH:MM):");
       while (true) {
         const { message: m } = await conversation.waitFor("message:text");
         if (m.text.trim() === "/cancel") {
+          await del(ctx, chatId, otherMsg.message_id);
+          await del(ctx, chatId, m.message_id);
           await ctx.reply("❌ Cancelled. Use /new to start again.");
           return null;
         }
         const t = m.text.trim();
-        if (/^\d{1,2}:\d{2}$/.test(t)) return t.padStart(5, "0");
+        if (/^\d{1,2}:\d{2}$/.test(t)) {
+          await del(ctx, chatId, otherMsg.message_id);
+          await del(ctx, chatId, m.message_id);
+          return t.padStart(5, "0");
+        }
         await ctx.reply("⚠️ Invalid format, expected HH:MM. Try again:");
       }
     }
-
-    // User typed a time directly instead of using keyboard
     if (upd.message?.text) {
       const t = upd.message.text.trim();
-      if (/^\d{1,2}:\d{2}$/.test(t)) return t.padStart(5, "0");
+      if (/^\d{1,2}:\d{2}$/.test(t)) {
+        await del(ctx, chatId, timeMsg.message_id);
+        await del(ctx, chatId, upd.message.message_id);
+        return t.padStart(5, "0");
+      }
       await ctx.reply("⚠️ Please tap a time button or enter HH:MM:");
     }
   }
@@ -209,6 +224,7 @@ async function askCategories(
   ctx: BotContext,
   categories: Category[]
 ): Promise<string[] | null> {
+  const chatId = ctx.chat!.id;
   const selected = new Set<string>();
 
   const buildKeyboard = () => {
@@ -227,40 +243,30 @@ async function askCategories(
   const catMsg = await ctx.reply("🏷 Select categories (tap to toggle, then Done):", {
     reply_markup: buildKeyboard(),
   });
-  const chatId = ctx.chat!.id;
   const msgId = catMsg.message_id;
 
   while (true) {
     const upd = await conversation.wait();
-
     if (upd.message?.text?.trim() === "/cancel") {
+      await del(ctx, chatId, msgId);
       await ctx.reply("❌ Cancelled. Use /new to start again.");
       return null;
     }
-
     if (!upd.callbackQuery?.data?.startsWith("cat:")) continue;
-
     await upd.answerCallbackQuery();
     const data = upd.callbackQuery.data;
-
     if (data === "cat:done") {
       if (selected.size === 0) {
         await upd.answerCallbackQuery("⚠️ Select at least one category");
         continue;
       }
-      // Remove the inline keyboard from the message
-      await ctx.api.editMessageReplyMarkup(chatId, msgId);
-      await ctx.reply(`🏷 Selected: ${[...selected].join(", ")}`);
+      await del(ctx, chatId, msgId);
       return [...selected];
     }
-
     const catId = data.replace("cat:", "");
     if (selected.has(catId)) selected.delete(catId);
     else selected.add(catId);
-
-    await ctx.api.editMessageReplyMarkup(chatId, msgId, {
-      reply_markup: buildKeyboard(),
-    });
+    await ctx.api.editMessageReplyMarkup(chatId, msgId, { reply_markup: buildKeyboard() });
   }
 }
 
@@ -272,6 +278,7 @@ async function askCity(
   conversation: BotConversation,
   ctx: BotContext
 ): Promise<string | null> {
+  const chatId = ctx.chat!.id;
   const kb = new InlineKeyboard();
   CITIES.forEach((city, i) => {
     kb.text(city, `city:${city}`);
@@ -279,13 +286,17 @@ async function askCity(
   });
   if (CITIES.length % 2 !== 0) kb.row();
 
-  await ctx.reply("🏙 City:", { reply_markup: kb });
-
+  const msg = await ctx.reply("🏙 City:", { reply_markup: kb });
   while (true) {
     const upd = await conversation.wait();
-    if (upd.message?.text?.trim() === "/cancel") { await ctx.reply("❌ Cancelled."); return null; }
+    if (upd.message?.text?.trim() === "/cancel") {
+      await del(ctx, chatId, msg.message_id);
+      await ctx.reply("❌ Cancelled.");
+      return null;
+    }
     if (upd.callbackQuery?.data?.startsWith("city:")) {
       await upd.answerCallbackQuery();
+      await del(ctx, chatId, msg.message_id);
       return upd.callbackQuery.data.replace("city:", "");
     }
   }
@@ -297,41 +308,64 @@ async function askMapLocation(
   conversation: BotConversation,
   ctx: BotContext
 ): Promise<{ lat: number; lon: number } | "__skip__" | null> {
-  await ctx.reply(
-    "\uD83D\uDCCD *Optional map pin*\n\n" +
-    "Tap \uD83D\uDCCE \u2192 Location in Telegram, browse the map, drag the pin to the venue, and send it.\n" +
-    "Tip: use the search bar in the location picker to navigate to the city first.\n\n" +
-    "Type /skip to skip, or /cancel to abort.",
-    { parse_mode: "Markdown" }
-  );
+  const chatId = ctx.chat!.id;
 
   while (true) {
-    const upd = await conversation.wait();
-    const text = upd.message?.text?.trim();
-    if (text === "/cancel") { await ctx.reply("\u274c Cancelled."); return null; }
-    if (text === "/skip") return "__skip__";
+    const instrMsg = await ctx.reply(
+      "\uD83D\uDCCD *Optional map pin*\n\n" +
+      "Tap \uD83D\uDCCE \u2192 Location in Telegram, browse the map, drag the pin to the venue, and send it.\n" +
+      "Tip: use the search bar in the location picker to navigate to the city first.\n\n" +
+      "Type /skip to skip, or /cancel to abort.",
+      { parse_mode: "Markdown" }
+    );
 
-    if (upd.message?.location) {
-      const { latitude, longitude } = upd.message.location;
-      const kb = new InlineKeyboard()
-        .text("\u2705 Confirm", "loc:yes")
-        .text("\uD83D\uDD04 Retry", "loc:retry");
-      await ctx.reply(
-        `\uD83D\uDCCD Pin placed at *${latitude.toFixed(6)}, ${longitude.toFixed(6)}*\n\nUse this location?`,
-        { parse_mode: "Markdown", reply_markup: kb }
-      );
-      while (true) {
-        const cbUpd = await conversation.wait();
-        if (cbUpd.message?.text?.trim() === "/cancel") { await ctx.reply("\u274c Cancelled."); return null; }
-        if (cbUpd.callbackQuery?.data === "loc:yes") {
-          await cbUpd.answerCallbackQuery();
-          return { lat: latitude, lon: longitude };
-        }
-        if (cbUpd.callbackQuery?.data === "loc:retry") {
-          await cbUpd.answerCallbackQuery();
-          await ctx.reply("OK, drop the pin again:");
-          break;
-        }
+    let locReceived: { latitude: number; longitude: number } | null = null;
+    outerLoop: while (true) {
+      const upd = await conversation.wait();
+      const text = upd.message?.text?.trim();
+      if (text === "/cancel") {
+        await del(ctx, chatId, instrMsg.message_id);
+        await ctx.reply("\u274c Cancelled.");
+        return null;
+      }
+      if (text === "/skip") {
+        await del(ctx, chatId, instrMsg.message_id);
+        if (upd.message) await del(ctx, chatId, upd.message.message_id);
+        return "__skip__";
+      }
+      if (upd.message?.location) {
+        await del(ctx, chatId, instrMsg.message_id);
+        await del(ctx, chatId, upd.message.message_id);
+        locReceived = { latitude: upd.message.location.latitude, longitude: upd.message.location.longitude };
+        break outerLoop;
+      }
+    }
+
+    if (!locReceived) continue;
+    const { latitude, longitude } = locReceived;
+    const kb = new InlineKeyboard()
+      .text("\u2705 Confirm", "loc:yes")
+      .text("\uD83D\uDD04 Retry", "loc:retry");
+    const confirmMsg = await ctx.reply(
+      `\uD83D\uDCCD Pin placed at *${latitude.toFixed(6)}, ${longitude.toFixed(6)}*\n\nUse this location?`,
+      { parse_mode: "Markdown", reply_markup: kb }
+    );
+    while (true) {
+      const cbUpd = await conversation.wait();
+      if (cbUpd.message?.text?.trim() === "/cancel") {
+        await del(ctx, chatId, confirmMsg.message_id);
+        await ctx.reply("\u274c Cancelled.");
+        return null;
+      }
+      if (cbUpd.callbackQuery?.data === "loc:yes") {
+        await cbUpd.answerCallbackQuery();
+        await del(ctx, chatId, confirmMsg.message_id);
+        return { lat: latitude, lon: longitude };
+      }
+      if (cbUpd.callbackQuery?.data === "loc:retry") {
+        await cbUpd.answerCallbackQuery();
+        await del(ctx, chatId, confirmMsg.message_id);
+        break; // retry outer loop
       }
     }
   }
@@ -344,13 +378,63 @@ async function askText(
   ctx: BotContext,
   prompt: string
 ): Promise<string | null> {
-  await ctx.reply(prompt);
+  const chatId = ctx.chat!.id;
+  const qMsg = await ctx.reply(prompt);
   const { message } = await conversation.waitFor("message:text");
+  await del(ctx, chatId, qMsg.message_id);
+  await del(ctx, chatId, message.message_id);
   if (message.text.trim() === "/cancel") {
     await ctx.reply("❌ Cancelled. Use /new to start again.");
     return null;
   }
   return message.text.trim();
+}
+
+// ── Venue picker with presets ────────────────────────────────────────────────
+
+async function askVenue(
+  conversation: BotConversation,
+  ctx: BotContext,
+  presets: LocationPreset[]
+): Promise<{ name: string; lat: number | null; lon: number | null } | null> {
+  const chatId = ctx.chat!.id;
+  const kb = new InlineKeyboard();
+  presets.forEach((p) => kb.text(`📍 ${p.name}`, `venue:${p.id}`).row());
+  kb.text("✍️ Type venue name", "venue:__custom__");
+
+  const msg = await ctx.reply("📍 Venue — pick a preset or type/tap to enter:", { reply_markup: kb });
+
+  while (true) {
+    const upd = await conversation.wait();
+    // User typed directly
+    if (upd.message?.text) {
+      const text = upd.message.text.trim();
+      if (text === "/cancel") {
+        await del(ctx, chatId, msg.message_id);
+        await del(ctx, chatId, upd.message.message_id);
+        await ctx.reply("❌ Cancelled.");
+        return null;
+      }
+      await del(ctx, chatId, msg.message_id);
+      await del(ctx, chatId, upd.message.message_id);
+      return { name: text, lat: null, lon: null };
+    }
+    if (upd.callbackQuery?.data?.startsWith("venue:")) {
+      await upd.answerCallbackQuery();
+      const key = upd.callbackQuery.data.replace("venue:", "");
+      await del(ctx, chatId, msg.message_id);
+      if (key === "__custom__") {
+        const qMsg = await ctx.reply("📍 Type the venue name:");
+        const { message } = await conversation.waitFor("message:text");
+        await del(ctx, chatId, qMsg.message_id);
+        await del(ctx, chatId, message.message_id);
+        if (message.text.trim() === "/cancel") { await ctx.reply("❌ Cancelled."); return null; }
+        return { name: message.text.trim(), lat: null, lon: null };
+      }
+      const preset = presets.find((p) => p.id === key);
+      if (preset) return { name: preset.name, lat: preset.lat, lon: preset.lon };
+    }
+  }
 }
 
 // ── Main conversation ─────────────────────────────────────────────────────────
@@ -359,13 +443,16 @@ export async function newEventConversation(
   conversation: BotConversation,
   ctx: BotContext
 ): Promise<void> {
-  await ctx.reply(
+  const chatId = ctx.chat!.id;
+  const introMsg = await ctx.reply(
     "📝 *New Event* — type /cancel at any time to abort.\n\nEvent name:",
     { parse_mode: "Markdown" }
   );
 
   // ── Name ──────────────────────────────────────────────────────────────────
   const { message: nameMsg } = await conversation.waitFor("message:text");
+  await del(ctx, chatId, introMsg.message_id);
+  await del(ctx, chatId, nameMsg.message_id);
   if (nameMsg.text.trim() === "/cancel") { await ctx.reply("❌ Cancelled."); return; }
   const name = nameMsg.text.trim();
   if (!name) { await ctx.reply("⚠️ Name cannot be empty. Use /new to start again."); return; }
@@ -399,11 +486,12 @@ export async function newEventConversation(
       .text("🔄 Change end date/time", "endfix:retry")
       .row()
       .text("✏️ Edit start date/time", "endfix:start");
-    await ctx.reply(
+    const warnMsg = await ctx.reply(
       "⚠️ End date and time cannot be before or the same as start date and time.\nWhat would you like to do?",
       { reply_markup: fixKb }
     );
     const fixUpd = await conversation.wait();
+    await del(ctx, chatId, warnMsg.message_id);
     if (fixUpd.callbackQuery) await fixUpd.answerCallbackQuery();
 
     if (fixUpd.callbackQuery?.data === "endfix:start") {
@@ -420,16 +508,26 @@ export async function newEventConversation(
   const id = toEventId(name, year);
 
   // ── Venue / city ──────────────────────────────────────────────────────────
-  const locationName = await askText(conversation, ctx, "📍 Venue name:");
-  if (locationName === null) return;
+  const locationPresets = await getLocations();
+  const venueResult = await askVenue(conversation, ctx, locationPresets);
+  if (venueResult === null) return;
+  const locationName = venueResult.name;
 
   const locationCity = await askCity(conversation, ctx);
   if (locationCity === null) return;
-  // ── Map pin (optional) ────────────────────────────────────────────────
-  const mapLoc = await askMapLocation(conversation, ctx);
-  if (mapLoc === null) return;
-  const lat = mapLoc === "__skip__" ? null : mapLoc.lat;
-  const lon = mapLoc === "__skip__" ? null : mapLoc.lon;
+
+  // ── Map pin (skip if preset auto-filled lat/lon) ──────────────────────────
+  let lat: number | null;
+  let lon: number | null;
+  if (venueResult.lat !== null) {
+    lat = venueResult.lat;
+    lon = venueResult.lon;
+  } else {
+    const mapLoc = await askMapLocation(conversation, ctx);
+    if (mapLoc === null) return;
+    lat = mapLoc === "__skip__" ? null : mapLoc.lat;
+    lon = mapLoc === "__skip__" ? null : mapLoc.lon;
+  }
   // ── Categories (multi-select keyboard) ───────────────────────────────────
   const allCategories = await getCategories();
   const category = await askCategories(conversation, ctx, allCategories);
@@ -440,9 +538,10 @@ export async function newEventConversation(
     .text("Free ✨", "price:free")
     .text("Paid 💰", "price:paid")
     .text("Donation 🙏", "price:donation");
-  await ctx.reply("💰 Price:", { reply_markup: priceKeyboard });
+  const priceMsg = await ctx.reply("💰 Price:", { reply_markup: priceKeyboard });
   const priceCbCtx = await conversation.waitFor("callback_query:data");
   await priceCbCtx.answerCallbackQuery();
+  await del(ctx, chatId, priceMsg.message_id);
   const price = priceCbCtx.callbackQuery.data.replace("price:", "");
 
   // ── Description ───────────────────────────────────────────────────────────
@@ -467,8 +566,10 @@ export async function newEventConversation(
 
   // ── Photo ─────────────────────────────────────────────────────────────────
   let photoBase64: string | undefined;
-  await ctx.reply("🖼 Send a photo (or type /skip):");
+  const photoPromptMsg = await ctx.reply("🖼 Send a photo (or type /skip):");
   const photoCtx = await conversation.wait();
+  await del(ctx, chatId, photoPromptMsg.message_id);
+  if (photoCtx.message) await del(ctx, chatId, photoCtx.message.message_id);
 
   if (photoCtx.message?.text?.trim() === "/cancel") {
     await ctx.reply("❌ Cancelled.");

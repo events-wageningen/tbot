@@ -64,17 +64,20 @@ bot.command("start", (ctx) =>
   )
 );
 
-bot.command("new", (ctx) =>
-  ctx.conversation.enter("newEventConversation")
-);
+bot.command("new", async (ctx) => {
+  await ctx.conversation.exit();
+  ctx.conversation.enter("newEventConversation");
+});
 
-bot.command("remove", (ctx) =>
-  ctx.conversation.enter("removeEventConversation")
-);
+bot.command("remove", async (ctx) => {
+  await ctx.conversation.exit();
+  ctx.conversation.enter("removeEventConversation");
+});
 
-bot.command("modify", (ctx) =>
-  ctx.conversation.enter("modifyEventConversation")
-);
+bot.command("modify", async (ctx) => {
+  await ctx.conversation.exit();
+  ctx.conversation.enter("modifyEventConversation");
+});
 
 bot.command("list", listCommand);
 

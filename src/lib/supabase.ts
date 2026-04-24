@@ -29,3 +29,18 @@ export async function getCategories(): Promise<Category[]> {
   if (error) throw error;
   return data ?? [];
 }
+
+export interface LocationPreset {
+  id: string;
+  name: string;
+  lat: number;
+  lon: number;
+}
+
+export async function getLocations(): Promise<LocationPreset[]> {
+  const { data } = await getSupabase()
+    .from("locations")
+    .select("id, name, lat, lon")
+    .order("name");
+  return (data ?? []) as LocationPreset[];
+}
