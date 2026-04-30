@@ -12,6 +12,7 @@ import { newEventConversation } from "./commands/new.js";
 import { removeEventConversation } from "./commands/remove.js";
 import { modifyEventConversation } from "./commands/modify.js";
 import { listCommand } from "./commands/list.js";
+import { addLocationConversation, removeLocationConversation } from "./commands/location.js";
 
 // ── Validate required env vars at startup ────────────────────────────────────
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -171,6 +172,8 @@ bot.use(conversations());
 bot.use(createConversation(newEventConversation));
 bot.use(createConversation(removeEventConversation));
 bot.use(createConversation(modifyEventConversation));
+bot.use(createConversation(addLocationConversation));
+bot.use(createConversation(removeLocationConversation));
 
 // ── Post-conversations middleware: handle pending switch + cleanup after finish
 // Runs after conversations() so ctx.conversation.enter() is available.
@@ -212,10 +215,12 @@ bot.use(async (ctx, next) => {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const CONVERSATION_LABELS: Record<string, string> = {
-  newEventConversation:    "new event",
-  removeEventConversation: "remove event",
-  modifyEventConversation: "modify event",
-  listCommand:             "event list",
+  newEventConversation:      "new event",
+  removeEventConversation:   "remove event",
+  modifyEventConversation:   "modify event",
+  listCommand:               "event list",
+  addLocationConversation:   "add location",
+  removeLocationConversation: "remove location",
 };
 
 /**
@@ -265,11 +270,12 @@ bot.command("start", (ctx) =>
   )
 );
 
-bot.command("new",    (ctx) => enterConversation(ctx, "newEventConversation"));
-bot.command("remove", (ctx) => enterConversation(ctx, "removeEventConversation"));
-bot.command("modify", (ctx) => enterConversation(ctx, "modifyEventConversation"));
-
-bot.command("list", (ctx) => enterConversation(ctx, "listCommand"));
+bot.command("new",           (ctx) => enterConversation(ctx, "newEventConversation"));
+bot.command("remove",        (ctx) => enterConversation(ctx, "removeEventConversation"));
+bot.command("modify",        (ctx) => enterConversation(ctx, "modifyEventConversation"));
+bot.command("list",          (ctx) => enterConversation(ctx, "listCommand"));
+bot.command("addlocation",   (ctx) => enterConversation(ctx, "addLocationConversation"));
+bot.command("removelocation",(ctx) => enterConversation(ctx, "removeLocationConversation"));
 
 // /cancel exits any active conversation
 bot.command("cancel", async (ctx) => {
@@ -292,11 +298,13 @@ process.once("SIGTERM", () => bot.stop());
 
 // Register commands with Telegram (shows the "/" menu near the keyboard)
 await bot.api.setMyCommands([
-  { command: "new",    description: "Add a new event" },
-  { command: "list",   description: "List upcoming events" },
-  { command: "remove", description: "Remove an event" },
-  { command: "modify", description: "Edit an event" },
-  { command: "cancel", description: "Cancel current operation" },
+  { command: "new",            description: "Add a new event" },
+  { command: "list",           description: "List upcoming events" },
+  { command: "remove",         description: "Remove an event" },
+  { command: "modify",         description: "Edit an event" },
+  { command: "addlocation",    description: "Add a venue preset" },
+  { command: "removelocation", description: "Remove a venue preset" },
+  { command: "cancel",         description: "Cancel current operation" },
 ]);
 
 console.log("Bot starting (long polling)…");
