@@ -620,12 +620,12 @@ export async function modifyEventConversation(
   try {
     await triggerDeploy();
     await ctx.reply(
-      `✅ *${event.name}* updated\\! The website will update in ~2 minutes\\.\n\n🔗 Direct link:\n${eventUrl}`,
+      `✅ *${event.name}* updated🎉 The website will update in ~2 minutes\\.\n\n🔗 Direct link:\n${eventUrl}`,
       { parse_mode: "MarkdownV2" }
     );
   } catch (err) {
     await ctx.reply(
-      `✅ Event updated\\! Deploy trigger failed:\n${err instanceof Error ? err.message : String(err)}\n\n🔗 Direct link:\n${eventUrl}`,
+      `✅ Event updated🎉 Deploy trigger failed:\n${err instanceof Error ? err.message : String(err)}\n\n🔗 Direct link:\n${eventUrl}`,
       { parse_mode: "MarkdownV2" }
     );
   }

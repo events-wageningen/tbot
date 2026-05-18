@@ -215,7 +215,7 @@ export async function addLocationConversation(
     return;
   }
 
-  await ctx.reply(`✅ *${name}* added as a location preset\\!`, { parse_mode: "MarkdownV2" });
+  await ctx.reply(`✅ *${name}* added as a location preset🎉`, { parse_mode: "MarkdownV2" });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
