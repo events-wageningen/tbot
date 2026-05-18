@@ -706,7 +706,7 @@ export async function newEventConversation(
   }
 
   // ── Trigger rebuild ───────────────────────────────────────────────────────
-  const eventUrl = `https://events-wageningen.nl/events/${id}/`;
+  const eventUrl = `https://events\\-wageningen.nl/events/${id}/`;
   try {
     await triggerDeploy();
     await ctx.reply(
