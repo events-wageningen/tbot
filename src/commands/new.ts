@@ -710,12 +710,12 @@ export async function newEventConversation(
   try {
     await triggerDeploy();
     await ctx.reply(
-      `✅ *${name}* added🎉 The website will update in ~2 minutes\\.\n\n🔗 Direct link \\(active after deploy\\):\n${eventUrl}`,
+      `✅ *${name}* added🎉 The website will update in ~2 minutes \n\n🔗 Direct link \\(active after deploy\\):\n${eventUrl}`,
       { parse_mode: "MarkdownV2" }
     );
   } catch (err) {
     await ctx.reply(
-      `✅ Event saved🎉 Deploy trigger failed:\n${err instanceof Error ? err.message : String(err)}\n\nTrigger manually from GitHub Actions\\.\n\n🔗 Direct link \\(active after deploy\\):\n${eventUrl}`,
+      `✅ Event saved🎉 Deploy trigger failed:\n${err instanceof Error ? err.message : String(err)}\n\nTrigger manually from GitHub Actions \n\n🔗 Direct link \\(active after deploy\\):\n${eventUrl}`,
       { parse_mode: "MarkdownV2" }
     );
   }
