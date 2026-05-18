@@ -705,19 +705,35 @@ export async function newEventConversation(
     }
   }
 
-  // ── Trigger rebuild ───────────────────────────────────────────────────────
-  const eventUrl = `https://events\\-wageningen.nl/events/${id}/`;
-  try {
-    await triggerDeploy();
-    await ctx.reply(
-      `✅ *${name}* added🎉 The website will update in ~2 minutes \n\n🔗 Direct link \\(active after deploy\\):\n${eventUrl}`,
-      { parse_mode: "MarkdownV2" }
-    );
-  } catch (err) {
-    await ctx.reply(
-      `✅ Event saved🎉 Deploy trigger failed:\n${err instanceof Error ? err.message : String(err)}\n\nTrigger manually from GitHub Actions \n\n🔗 Direct link \\(active after deploy\\):\n${eventUrl}`,
-      { parse_mode: "MarkdownV2" }
-    );
-  }
+// ── Trigger rebuild ───────────────────────────────────────────────────────
+const eventUrl = `https://events-wageningen.nl/events/${id}/`;
+
+function escapeMarkdownV2(text) {
+  return text.replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
+}
+
+try {
+  await triggerDeploy();
+
+  const safeName = escapeMarkdownV2(name);
+  const safeUrl = escapeMarkdownV2(eventUrl);
+
+  await ctx.reply(
+    `✅ *${safeName}* added🎉 The website will update in \\~2 minutes\n\n🔗 Direct link \\(active after deploy\\):\n${safeUrl}`,
+    { parse_mode: "MarkdownV2" }
+  );
+
+} catch (err) {
+
+  const safeUrl = escapeMarkdownV2(eventUrl);
+  const safeErr = escapeMarkdownV2(
+    err instanceof Error ? err.message : String(err)
+  );
+
+  await ctx.reply(
+    `✅ Event saved🎉 Deploy trigger failed:\n${safeErr}\n\nTrigger manually from GitHub Actions\n\n🔗 Direct link \\(active after deploy\\):\n${safeUrl}`,
+    { parse_mode: "MarkdownV2" }
+  );
+}
 }
 
