@@ -130,16 +130,30 @@ export async function removeEventConversation(
     return;
   }
 
-  // ── Trigger rebuild ───────────────────────────────────────────────────────
-  try {
-    await triggerDeploy();
-    await ctx.reply(
-      `✅ *${eventName}* removed. The website will update in ~2 minutes.`,
-      { parse_mode: "Markdown" }
-    );
-  } catch (err) {
-    await ctx.reply(
-      `✅ Event removed from DB. Deploy trigger failed:\n${err instanceof Error ? err.message : String(err)}`
-    );
-  }
+// ── Trigger rebuild ───────────────────────────────────────────────────────
+function escapeMarkdownV2(text) {
+  return text.replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
+}
+
+try {
+  await triggerDeploy();
+
+  const safeEventName = escapeMarkdownV2(eventName);
+
+  await ctx.reply(
+    `✅ *${safeEventName}* removed\\. The website will update in \\~2 minutes\\.`,
+    { parse_mode: "MarkdownV2" }
+  );
+
+} catch (err) {
+
+  const safeErr = escapeMarkdownV2(
+    err instanceof Error ? err.message : String(err)
+  );
+
+  await ctx.reply(
+    `✅ Event removed from DB\\. Deploy trigger failed:\n${safeErr}`,
+    { parse_mode: "MarkdownV2" }
+  );
+}
 }
