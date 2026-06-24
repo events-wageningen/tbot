@@ -2,8 +2,8 @@ import { InlineKeyboard } from "grammy";
 import type { Conversation, ConversationFlavor } from "@grammyjs/conversations";
 import type { Context } from "grammy";
 import { getSupabase, getCategories, getLocations, type Category, type LocationPreset } from "../lib/supabase.js";
-import { triggerDeploy } from "../lib/github.js";
-import { uploadImage } from "../lib/github.js";
+import { triggerDeploy, uploadImage } from "../lib/github.js";
+import { truncateText } from "../lib/format.js";
 
 export type BotContext = Context & ConversationFlavor;
 export type BotConversation = Conversation<BotContext>;
@@ -535,7 +535,7 @@ export async function modifyEventConversation(
         const v = await askText(conversation, ctx, "📋 New description:");
         if (v === null) return;
         updates.description = v;
-        setRecapValue("📋 Description", v.length > 80 ? v.slice(0, 80) + "…" : v);
+        setRecapValue("📋 Description", truncateText(v, 80));
         await updateRecap(evLabel, fieldsLabel);
         break;
       }

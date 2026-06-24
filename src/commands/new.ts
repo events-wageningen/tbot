@@ -4,6 +4,7 @@ import type { Context } from "grammy";
 import { getSupabase, getCategories, getLocations, type Category, type LocationPreset } from "../lib/supabase.js";
 import { uploadImage, triggerDeploy } from "../lib/github.js";
 import { toEventId } from "../lib/slugify.js";
+import { sanitizeText, truncateText } from "../lib/format.js";
 
 export type BotContext = Context & ConversationFlavor;
 export type BotConversation = Conversation<BotContext>;
@@ -387,7 +388,7 @@ async function askText(
     await ctx.reply("❌ Cancelled. Use /new to start again.");
     return null;
   }
-  return message.text.trim();
+  return sanitizeText(message.text.trim());
 }
 
 // ── Venue picker with presets ────────────────────────────────────────────────
@@ -482,7 +483,7 @@ export async function newEventConversation(
   await del(ctx, chatId, introMsg.message_id);
   await del(ctx, chatId, nameMsg.message_id);
   if (nameMsg.text.trim() === "/cancel") { await ctx.reply("❌ Cancelled."); return; }
-  const name = nameMsg.text.trim();
+  const name = sanitizeText(nameMsg.text.trim());
   if (!name) { await ctx.reply("⚠️ Name cannot be empty. Use /new to start again."); return; }
   setRecap("name", "✏️ Name", name);
   await updateRecap();
@@ -589,7 +590,7 @@ export async function newEventConversation(
   // ── Description ───────────────────────────────────────────────────────────
   const description = await askText(conversation, ctx, "📋 Description:");
   if (description === null) return;
-  setRecap("desc", "📋 Description", description.length > 80 ? description.slice(0, 80) + "…" : description);
+  setRecap("desc", "📋 Description", truncateText(description, 80));
   await updateRecap();
 
   // ── URL ───────────────────────────────────────────────────────────────────
@@ -642,7 +643,7 @@ export async function newEventConversation(
     `📍 ${locationName}, ${locationCity}` + (lat != null ? ` (📌 ${lat.toFixed(5)}, ${lon!.toFixed(5)})` : ""),
     `🏷 ${category.join(", ")}`,
     `💰 ${price}`,
-    `📋 ${description.length > 100 ? description.slice(0, 100) + "…" : description}`,
+    `📋 ${truncateText(description, 100)}`,
     url ? `🔗 ${url}` : null,
     tags.length > 0 ? `# ${tags.join(", ")}` : null,
     photoBase64 ? "🖼 Photo: ✅" : "🖼 Photo: none",
